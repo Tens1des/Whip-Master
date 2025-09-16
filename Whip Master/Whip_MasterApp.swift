@@ -11,7 +11,7 @@ import SwiftUI
 struct Whip_MasterApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            MainMenuView()
         }
     }
 }
