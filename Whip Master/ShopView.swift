@@ -7,9 +7,70 @@
 
 import SwiftUI
 
+// MARK: - Skin Model
+struct Skin {
+    let id: Int
+    let name: String
+    let iconName: String
+    let gameSpriteName: String
+    let price: Int
+    var isPurchased: Bool
+    var isSelected: Bool
+}
+
+// MARK: - Skin Manager
+class SkinManager: ObservableObject {
+    @Published var skins: [Skin] = []
+    @Published var selectedSkinId: Int = 4 // По умолчанию clown_default (4-й скин)
+    @Published var coins: Int = 500 // Начальные монеты
+    
+    static let shared = SkinManager() // Singleton для доступа из любой части приложения
+    
+    init() {
+        setupSkins()
+    }
+    
+    private func setupSkins() {
+        skins = [
+            Skin(id: 1, name: "Skin 1", iconName: "skin1_icon", gameSpriteName: "skin1", price: 100, isPurchased: false, isSelected: false),
+            Skin(id: 2, name: "Skin 2", iconName: "skin2_icon", gameSpriteName: "skin2", price: 150, isPurchased: false, isSelected: false),
+            Skin(id: 3, name: "Skin 3", iconName: "skin3_icon", gameSpriteName: "skin3", price: 200, isPurchased: false, isSelected: false),
+            Skin(id: 4, name: "Default", iconName: "clown_default", gameSpriteName: "clown_default", price: 0, isPurchased: true, isSelected: true)
+        ]
+    }
+    
+    func buySkin(_ skinId: Int) {
+        guard let index = skins.firstIndex(where: { $0.id == skinId }) else { return }
+        guard !skins[index].isPurchased else { return }
+        guard coins >= skins[index].price else { return }
+        
+        coins -= skins[index].price
+        skins[index].isPurchased = true
+    }
+    
+    func selectSkin(_ skinId: Int) {
+        guard let index = skins.firstIndex(where: { $0.id == skinId }) else { return }
+        guard skins[index].isPurchased else { return }
+        
+        // Снимаем выделение с всех скинов
+        for i in 0..<skins.count {
+            skins[i].isSelected = false
+        }
+        
+        // Выделяем выбранный скин
+        skins[index].isSelected = true
+        selectedSkinId = skinId
+    }
+    
+    func getCurrentSkinSprite() -> String {
+        return skins.first { $0.id == selectedSkinId }?.gameSpriteName ?? "clown_default"
+    }
+}
+
 struct ShopView: View {
     @Binding var isPresented: Bool
     @State private var showSettings = false
+    @StateObject var skinManager = SkinManager.shared
     
     var body: some View {
         ZStack {
@@ -51,6 +112,12 @@ struct ShopView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 70, height: 70)
+                            .overlay(
+                                Text("\(skinManager.coins)")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.7), radius: 1, x: 1, y: 1)
+                            )
                         
                         // Кнопка настроек
                         Button(action: {
@@ -71,126 +138,60 @@ struct ShopView: View {
                 // Контент магазина - панели скинов
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 20) {
-                        // Скин 1 - доступен для покупки
-                        VStack(spacing: 10) {
-                            // Панель скина
-                            Image("skinPanel_image")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 200, height: 250)
-                                .overlay(
-                                    VStack {
-                                        // Скин сверху
-                                        Image("skin1_icon")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 150, height: 150)
-                                        
-                                        Spacer()
-                                        
-                                        // Кнопка покупки внизу панели
-                                        Button(action: {
-                                            // Действие покупки скина 1
-                                        }) {
-                                            Image("buy_button")
+                        ForEach(skinManager.skins, id: \.id) { skin in
+                            VStack(spacing: 10) {
+                                // Панель скина
+                                Image("skinPanel_image")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 200, height: 250)
+                                    .overlay(
+                                        VStack {
+                                            // Скин сверху
+                                            Image(skin.iconName)
                                                 .resizable()
                                                 .aspectRatio(contentMode: .fit)
-                                                .frame(width: 120, height: 40)
-                                                
+                                                .frame(width: 150, height: 150)
+                                            
+                                            Spacer()
+                                            
+                                            // Цена скина
+
+                                            
+                                            // Кнопка внизу панели
+                                            if skin.isSelected {
+                                                // Кнопка "В использовании"
+                                                Image("inUse_button")
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fit)
+                                                    .frame(width: 120, height: 40)
+                                            } else if skin.isPurchased {
+                                                // Кнопка "Использовать"
+                                                Button(action: {
+                                                    skinManager.selectSkin(skin.id)
+                                                }) {
+                                                    Image("use_button")
+                                                        .resizable()
+                                                        .aspectRatio(contentMode: .fit)
+                                                        .frame(width: 120, height: 40)
+                                                }
+                                            } else {
+                                                // Кнопка покупки
+                                                Button(action: {
+                                                    skinManager.buySkin(skin.id)
+                                                }) {
+                                                    Image("buy_button")
+                                                        .resizable()
+                                                        .aspectRatio(contentMode: .fit)
+                                                        .frame(width: 120, height: 40)
+                                                }
+                                                .disabled(skinManager.coins < skin.price)
+                                                .opacity(skinManager.coins < skin.price ? 0.5 : 1.0)
+                                            }
                                         }
-                                    }
-                                    .padding(.vertical, 20)
-                                )
-                        }
-                        
-                        // Скин 2 - в использовании
-                        VStack(spacing: 10) {
-                            // Панель скина
-                            Image("skinPanel_image")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 200, height: 250)
-                                .overlay(
-                                    VStack {
-                                        // Скин сверху
-                                        Image("skin2_icon")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 150, height: 150)
-                                        
-                                        Spacer()
-                                        
-                                        // Кнопка "В использовании" внизу панели
-                                        Image("inUse_button")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 120, height: 40)
-                                    }
-                                    .padding(.vertical, 20)
-                                )
-                        }
-                        
-                        // Скин 3 - куплен, но не используется
-                        VStack(spacing: 10) {
-                            // Панель скина
-                            Image("skinPanel_image")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 200, height: 250)
-                                .overlay(
-                                    VStack {
-                                        // Скин сверху
-                                        Image("skin3_icon")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 150, height: 150)
-                                        
-                                        Spacer()
-                                        
-                                        // Кнопка "Использовать" внизу панели
-                                        Button(action: {
-                                            // Действие смены скина на 3
-                                        }) {
-                                            Image("use_button")
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fit)
-                                                .frame(width: 120, height: 40)
-                                               
-                                        }
-                                    }
-                                    .padding(.vertical, 20)
-                                )
-                        }
-                        
-                        // Скин 4 - доступен для покупки
-                        VStack(spacing: 10) {
-                            // Панель скина
-                            Image("skinPanel_image")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 200, height: 250)
-                                .overlay(
-                                    VStack {
-                                        // Скин сверху
-                                        Image("skin4_icon")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 150, height: 150)
-                                        
-                                        Spacer()
-                                        
-                                        // Кнопка покупки внизу панели
-                                        Button(action: {
-                                            // Действие покупки скина 4
-                                        }) {
-                                            Image("buy_button")
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fit)
-                                                .frame(width: 120, height: 40)
-                                        }
-                                    }
-                                    .padding(.vertical, 20)
-                                )
+                                        .padding(.vertical, 20)
+                                    )
+                            }
                         }
                     }
                     .padding(.horizontal, 20)

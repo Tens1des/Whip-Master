@@ -10,7 +10,8 @@ import SwiftUI
 struct TasksView: View {
     @Binding var isPresented: Bool
     @State private var showSettings = false
-    
+    @State private var coins: Int = 500 // Монеты для тестирования
+
     var body: some View {
         ZStack {
             // Фоновое изображение
@@ -51,6 +52,12 @@ struct TasksView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 70, height: 70)
+                            .overlay(
+                                Text("\(coins)")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.7), radius: 1, x: 1, y: 1)
+                            )
                         
                         // Кнопка настроек
                         Button(action: {

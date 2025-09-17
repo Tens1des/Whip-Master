@@ -11,6 +11,7 @@ struct SettingsView: View {
     @Binding var isPresented: Bool
     @State private var musicVolume: Double = 0.0
     @State private var soundVolume: Double = 100.0
+    @StateObject private var skinManager = SkinManager.shared
     
     var body: some View {
         ZStack {
@@ -45,12 +46,17 @@ struct SettingsView: View {
                     
                     Spacer()
                     
-                    // Невидимая кнопка для баланса
-                    Image("back_button")
+                    // Панель для монет
+                    Image("money_panel")
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 50, height: 50)
-                        .opacity(0)
+                        .frame(width: 70, height: 70)
+                        .overlay(
+                            Text("\(skinManager.coins)")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.7), radius: 1, x: 1, y: 1)
+                        )
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 50)

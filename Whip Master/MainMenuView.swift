@@ -12,6 +12,7 @@ struct MainMenuView: View {
     @State private var showSettings = false
     @State private var showShop = false
     @State private var showTasks = false
+    @StateObject private var skinManager = SkinManager.shared
     
     var body: some View {
         ZStack {
@@ -59,6 +60,12 @@ struct MainMenuView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 70, height: 70)
+                            .overlay(
+                                Text("\(skinManager.coins)")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: .black.opacity(0.7), radius: 1, x: 1, y: 1)
+                            )
                         
                         // Кнопка настроек
                         Button(action: {
@@ -107,34 +114,37 @@ struct MainMenuView: View {
                 VStack(spacing: 10) {
                     // Верхняя полоса уровней
                     HStack(spacing: 15) {
-                        // Уровень 1 (пройден - 2 звезды)
-                        Image("unlockLvlPanel_image")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 50, height: 50)
-                            .overlay(
-                                VStack {
-                                    HStack(spacing: 2) {
-                                        Image("fillStar_icon")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 12, height: 12)
-                                        Image("fillStar_icon")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 12, height: 12)
-                                        Image("notFillStar_icon")
-                                            .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(width: 12, height: 12)
+                        // Уровень 1 (нажатие открывает игру)
+                        Button(action: {
+                            showGame = true
+                        }) {
+                            Image("unlockLvlPanel_image")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 50, height: 50)
+                                .overlay(
+                                    VStack {
+                                        HStack(spacing: 2) {
+                                            Image("fillStar_icon")
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 12, height: 12)
+                                            Image("fillStar_icon")
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 12, height: 12)
+                                            Image("notFillStar_icon")
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 12, height: 12)
+                                        }
+                                        .offset(y: -8)
+                                        Text("1")
+                                            .font(.system(size: 15, weight: .bold))
+                                            .foregroundColor(.white)
                                     }
-                                    .offset(y: -8)
-                                  //  Spacer()
-                                    Text("1")
-                                        .font(.system(size: 15, weight: .bold))
-                                        .foregroundColor(.white)
-                                }
-                            )
+                                )
+                        }
                         
                         // Уровень 2 (пройден - 3 звезды)
                         Image("unlockLvlPanel_image")
