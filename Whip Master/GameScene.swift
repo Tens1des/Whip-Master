@@ -46,6 +46,8 @@ class GameScene: SKScene, ObservableObject {
     private var spotlightTargetIndex: Int = -1 // на какое животное направлен прожектор
     private var spotlightTimer: TimeInterval = 0
     private var spotlightChangeInterval: TimeInterval = 3.0 // интервал смены направления (3 секунды)
+    private var spotlightAngle: CGFloat = 0 // текущий угол прожектора
+    private var spotlightRotationSpeed: CGFloat = 0.02 // скорость вращения прожектора (радиан за кадр)
     
     // MARK: - Level timer
     @Published var remainingSeconds: Int = 90
@@ -157,9 +159,9 @@ class GameScene: SKScene, ObservableObject {
             let y = centerY + radius * sin(angle)
             animal.position = CGPoint(x: x, y: y)
             
-            // Масштабируем животное
+            // Масштабируем животное (увеличиваем размер)
             if let texture = animal.texture {
-                let targetHeight = frame.height * 0.15
+                let targetHeight = frame.height * 0.25  // увеличили с 0.15 до 0.25
                 let scale = max(0.01, targetHeight / texture.size().height)
                 animal.xScale = scale
                 animal.yScale = scale
@@ -222,76 +224,93 @@ class GameScene: SKScene, ObservableObject {
         // Очищаем массив прожекторов
         animalSpotlights.removeAll()
         
-        // Создаем прожектор для каждого животного
-        for i in 0..<animals.count {
-            let spotlight = SKSpriteNode(imageNamed: "light_area")
-            
-            if spotlight.texture == nil {
-                print("[GameScene] ERROR: Failed to create spotlight sprite for animal \(i)")
-                continue
-            }
-            
-            // Размещаем прожектор ниже животного
-            spotlight.position = animals[i].position
-            spotlight.position.y -= 80 // ниже животного для большего расстояния до прогресс-бара
-            
-            // Масштабируем прожектор (делаем больше)
-            if let texture = spotlight.texture {
-                let targetHeight = frame.height * 0.25 // увеличиваем размер
-                let scale = max(0.01, targetHeight / texture.size().height)
-                spotlight.xScale = scale
-                spotlight.yScale = scale
-                print("[GameScene] Spotlight \(i) texture size: \(texture.size()), scale: \(scale)")
-            }
-            
-            spotlight.zPosition = 15 // выше животных (у них zPosition = 10)
-            spotlight.name = "spotlight_\(i)"
-            spotlight.isHidden = true // изначально скрыты
-            addChild(spotlight)
-            animalSpotlights.append(spotlight)
-            
-            print("[GameScene] Spotlight \(i) added at position: \(spotlight.position)")
+        // Создаем один вращающийся прожектор
+        let spotlight = SKSpriteNode(imageNamed: "light_area")
+        
+        if spotlight.texture == nil {
+            print("[GameScene] ERROR: Failed to create spotlight sprite")
+            return
         }
         
-        // Начинаем с случайного направления
-        changeSpotlightTarget()
+        // Размещаем прожектор в центре арены
+        spotlight.position = CGPoint(x: frame.midX, y: frame.midY)
         
-        print("[GameScene] All animal spotlights created: \(animalSpotlights.count)")
+        // Масштабируем прожектор (делаем больше)
+        if let texture = spotlight.texture {
+            let targetHeight = frame.height * 0.3 // размер прожектора
+            let scale = max(0.01, targetHeight / texture.size().height)
+            spotlight.xScale = scale
+            spotlight.yScale = scale
+            print("[GameScene] Spotlight texture size: \(texture.size()), scale: \(scale)")
+        }
+        
+        spotlight.zPosition = 15 // выше животных (у них zPosition = 10)
+        spotlight.name = "rotating_spotlight"
+        spotlight.isHidden = false // всегда видим
+        addChild(spotlight)
+        animalSpotlights.append(spotlight)
+        
+        // Инициализируем угол
+        spotlightAngle = 0
+        
+        print("[GameScene] Rotating spotlight created at position: \(spotlight.position)")
     }
     
-    private func changeSpotlightTarget() {
+    private func updateSpotlightRotation() {
+        guard !animalSpotlights.isEmpty else { return }
+        
+        // Обновляем угол вращения
+        spotlightAngle += spotlightRotationSpeed
+        
+        // Получаем радиус арены
+        let centerX = frame.midX
+        let centerY = frame.midY
+        let radius = min(frame.width, frame.height) * 0.35
+        
+        // Вычисляем новую позицию прожектора
+        let newX = centerX + radius * cos(spotlightAngle)
+        let newY = centerY + radius * sin(spotlightAngle)
+        
+        // Обновляем позицию прожектора
+        if let spotlight = animalSpotlights.first {
+            spotlight.position = CGPoint(x: newX, y: newY)
+        }
+        
+        // Проверяем, освещает ли прожектор какое-либо животное
+        checkSpotlightIllumination()
+    }
+    
+    private func checkSpotlightIllumination() {
         guard !animals.isEmpty, !animalSpotlights.isEmpty else { return }
         
-        // Скрываем все прожекторы и возвращаем животных в темное состояние
-        for (index, spotlight) in animalSpotlights.enumerated() {
-            spotlight.isHidden = true
-            // Возвращаем только скин животного в темное состояние, если оно было освещено
-            if index == spotlightTargetIndex {
-                hideAnimalSkin(at: index)
+        let spotlight = animalSpotlights.first!
+        let spotlightRadius: CGFloat = frame.height * 0.15 // радиус освещения
+        
+        // Скрываем таймер предыдущего освещенного животного (но НЕ меняем скин, если животное активно)
+        if spotlightTargetIndex >= 0 && spotlightTargetIndex < animals.count {
+            hideAnimalTimer(for: spotlightTargetIndex)
+            // Меняем скин на темный только если животное НЕ активно (не имеет панели)
+            if !animalActive[spotlightTargetIndex] {
+                hideAnimalSkin(at: spotlightTargetIndex)
             }
         }
         
-        // Выбираем случайное животное
-        let newTarget = Int.random(in: 0..<animals.count)
-        spotlightTargetIndex = newTarget
+        spotlightTargetIndex = -1 // сбрасываем текущую цель
         
-        // Показываем прожектор для выбранного животного
-        if newTarget < animalSpotlights.count {
-            let spotlight = animalSpotlights[newTarget]
-            spotlight.isHidden = false
+        // Проверяем каждое животное на попадание в зону освещения
+        for (index, animal) in animals.enumerated() {
+            let distance = hypot(animal.position.x - spotlight.position.x, 
+                               animal.position.y - spotlight.position.y)
             
-            // Обновляем позицию прожектора (следуем за животным)
-            spotlight.position = animals[newTarget].position
-            spotlight.position.y += 20 // ниже животного для большего расстояния до прогресс-бара
-            
-            // Меняем только скин животного с темной версии на светлую (без панели)
-            showAnimalSkin(at: newTarget)
-            
-            print("[GameScene] Spotlight \(newTarget) now targeting animal \(newTarget)")
+            if distance <= spotlightRadius {
+                // Прожектор освещает это животное
+                spotlightTargetIndex = index
+                showAnimalSkin(at: index)
+                showAnimalTimer(for: index)
+                print("[GameScene] Spotlight illuminating animal \(index)")
+                break
+            }
         }
-        
-        // Показываем таймер для освещенного животного
-        showAnimalTimer(for: newTarget)
     }
     
     private func showAnimalTimer(for index: Int) {
@@ -446,7 +465,7 @@ class GameScene: SKScene, ObservableObject {
         
         // Устанавливаем флаг показа последовательности
         animalShowingSequence[index] = true
-        animalSequenceTimer[index] = 2.0 // 2 секунды показа
+        animalSequenceTimer[index] = 5.0 // 5 секунд показа
         
         print("[GameScene] Showing target sequence for animal \(index): \(animalTargetSequences[index])")
     }
@@ -518,10 +537,14 @@ class GameScene: SKScene, ObservableObject {
         guard index < animals.count, index < animalActive.count else { return }
         
         // Меняем только скин на светлую версию (без активации панели)
-        let lightName = animalNames[index]
-        animals[index].texture = SKTexture(imageNamed: lightName)
-        
-        print("[GameScene] Animal \(index) skin shown (light version)")
+        // Но только если животное еще не активно (не имеет панели)
+        if !animalActive[index] {
+            let lightName = animalNames[index]
+            animals[index].texture = SKTexture(imageNamed: lightName)
+            print("[GameScene] Animal \(index) skin shown (light version)")
+        } else {
+            print("[GameScene] Animal \(index) already active, keeping current skin")
+        }
     }
     
     private func hideAnimalSkin(at index: Int) {
@@ -615,7 +638,7 @@ class GameScene: SKScene, ObservableObject {
             
             animal.position = CGPoint(x: x, y: y)
             if let texture = animal.texture {
-                let targetHeight = frame.height * 0.15
+                let targetHeight = frame.height * 0.25  // увеличили с 0.15 до 0.25
                 let scale = max(0.01, targetHeight / texture.size().height)
                 animal.xScale = scale
                 animal.yScale = scale
@@ -697,7 +720,6 @@ class GameScene: SKScene, ObservableObject {
             setupScene()
         } else {
             layoutAnimals()
-            // layoutSpotlights() // заморожены
         }
         print("[GameScene] didChangeSize: old=\(oldSize) new=\(size)")
     }
@@ -706,13 +728,14 @@ class GameScene: SKScene, ObservableObject {
         guard let touch = touches.first else { return }
         let location = touch.location(in: self)
         
-        // Сначала проверяем нажатие на темных животных для активации
+        // Проверяем нажатие на освещенных животных для активации
         for (index, animal) in animals.enumerated() {
             if !animalVisible.indices.contains(index) || !animalVisible[index] { continue }
             if animalActive.indices.contains(index) && animalActive[index] { continue } // Уже активное
+            if spotlightTargetIndex != index { continue } // Только освещенные животные
             
             if animal.contains(location) {
-                print("[GameScene] Touched dark animal \(index), activating...")
+                print("[GameScene] Touched illuminated animal \(index), activating...")
                 activateAnimal(at: index)
                 return
             }
@@ -793,6 +816,10 @@ class GameScene: SKScene, ObservableObject {
         guard !isPausedByUser && !gameEnded else { return }
         if lastUpdateTime == 0 { lastUpdateTime = currentTime; return }
         let dt = currentTime - lastUpdateTime
+        
+        // Обновляем вращение прожектора каждый кадр
+        updateSpotlightRotation()
+        
         if dt >= 1.0 {
             lastUpdateTime = currentTime
             if remainingSeconds > 0 {
@@ -815,20 +842,6 @@ class GameScene: SKScene, ObservableObject {
                         shuffleSequence(for: i)
                     }
                 }
-            }
-            
-            // Обрабатываем смену направления прожектора
-            spotlightTimer += 1.0
-            if spotlightTimer >= spotlightChangeInterval {
-                spotlightTimer = 0
-                
-                // Скрываем таймер предыдущего животного
-                if spotlightTargetIndex >= 0 && spotlightTargetIndex < animals.count {
-                    hideAnimalTimer(for: spotlightTargetIndex)
-                }
-                
-                // Меняем направление прожектора
-                changeSpotlightTarget()
             }
             
             // Перерисовываем UI
@@ -891,11 +904,11 @@ class GameScene: SKScene, ObservableObject {
         
         // Сбрасываем состояние прожекторов
         spotlightTargetIndex = -1
-        spotlightTimer = 0
+        spotlightAngle = 0
         
-        // Скрываем все прожекторы
+        // Показываем прожектор (он всегда видим)
         for spotlight in animalSpotlights {
-            spotlight.isHidden = true
+            spotlight.isHidden = false
         }
         
         // Показываем всех животных в темном состоянии
