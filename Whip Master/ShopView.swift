@@ -71,6 +71,22 @@ struct ShopView: View {
     @Binding var isPresented: Bool
     @State private var showSettings = false
     @StateObject var skinManager = SkinManager.shared
+    @State private var infoOpenSkinIds: Set<Int> = []
+    
+    private func getSkinInfoText(_ skinId: Int) -> String {
+        switch skinId {
+        case 1:
+            return "Ошибки игрока замедляют таймер животного на 4 сек вместо штрафа"
+        case 2:
+            return "При правильном повторении комбинации добавляет +3 сек к таймеру животного"
+        case 3:
+            return "Увеличивает время показа комбинации на +4 сек"
+        case 4:
+            return "Увеличивает время показа комбинации на +2 сек"
+        default:
+            return "Информация о скине"
+        }
+    }
     
     var body: some View {
         ZStack {
@@ -146,51 +162,91 @@ struct ShopView: View {
                                     .aspectRatio(contentMode: .fit)
                                     .frame(width: 200, height: 250)
                                     .overlay(
-                                        VStack {
-                                            // Скин сверху
-                                            Image(skin.iconName)
-                                                .resizable()
-                                                .aspectRatio(contentMode: .fit)
-                                                .frame(width: 150, height: 150)
-                                            
-                                            Spacer()
-                                            
-                                            // Цена скина
-
-                                            
-                                            // Кнопка внизу панели
-                                            if skin.isSelected {
-                                                // Кнопка "В использовании"
-                                                Image("inUse_button")
+                                        ZStack {
+                                            // Контент панели
+                                            VStack {
+                                                // Скин сверху
+                                                Image(skin.iconName)
                                                     .resizable()
                                                     .aspectRatio(contentMode: .fit)
-                                                    .frame(width: 120, height: 40)
-                                            } else if skin.isPurchased {
-                                                // Кнопка "Использовать"
-                                                Button(action: {
-                                                    skinManager.selectSkin(skin.id)
-                                                }) {
-                                                    Image("use_button")
+                                                    .frame(width: 150, height: 150)
+                                                    .opacity(infoOpenSkinIds.contains(skin.id) ? 0 : 1)
+                                                    .offset(y: infoOpenSkinIds.contains(skin.id) ? 180 : 0)
+                                                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: infoOpenSkinIds)
+
+                                                Spacer()
+                                                
+                                                // Кнопка внизу панели
+                                                if !infoOpenSkinIds.contains(skin.id) && skin.isSelected {
+                                                    // Кнопка "В использовании"
+                                                    Image("inUse_button")
                                                         .resizable()
                                                         .aspectRatio(contentMode: .fit)
                                                         .frame(width: 120, height: 40)
+                                                } else if !infoOpenSkinIds.contains(skin.id) && skin.isPurchased {
+                                                    // Кнопка "Использовать"
+                                                    Button(action: {
+                                                        skinManager.selectSkin(skin.id)
+                                                    }) {
+                                                        Image("use_button")
+                                                            .resizable()
+                                                            .aspectRatio(contentMode: .fit)
+                                                            .frame(width: 120, height: 40)
+                                                    }
+                                                } else if !infoOpenSkinIds.contains(skin.id) {
+                                                    // Кнопка покупки
+                                                    Button(action: {
+                                                        skinManager.buySkin(skin.id)
+                                                    }) {
+                                                        Image("buy_button")
+                                                            .resizable()
+                                                            .aspectRatio(contentMode: .fit)
+                                                            .frame(width: 120, height: 40)
+                                                    }
+                                                    .disabled(skinManager.coins < skin.price)
+                                                    .opacity(skinManager.coins < skin.price ? 0.5 : 1.0)
                                                 }
-                                            } else {
-                                                // Кнопка покупки
-                                                Button(action: {
-                                                    skinManager.buySkin(skin.id)
-                                                }) {
-                                                    Image("buy_button")
-                                                        .resizable()
-                                                        .aspectRatio(contentMode: .fit)
-                                                        .frame(width: 120, height: 40)
-                                                }
-                                                .disabled(skinManager.coins < skin.price)
-                                                .opacity(skinManager.coins < skin.price ? 0.5 : 1.0)
                                             }
+                                            .padding(.vertical, 20)
+
+                                            // Текст информации поверх, по центру панели без фона
+                                            if infoOpenSkinIds.contains(skin.id) {
+                                                VStack {
+                                                    Spacer(minLength: 0)
+                                                    Text(getSkinInfoText(skin.id))
+                                                        .font(.system(size: 13, weight: .semibold))
+                                                        .foregroundColor(.white)
+                                                        .multilineTextAlignment(.center)
+                                                        .padding(.horizontal, 17)
+                                                        .fixedSize(horizontal: false, vertical: true)
+                                                    Spacer(minLength: 0)
+                                                }
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 8)
+                                                .transition(.opacity)
+                                                .animation(.easeInOut(duration: 0.2), value: infoOpenSkinIds)
+                                            }
+
                                         }
-                                        .padding(.vertical, 20)
                                     )
+                                    .overlay(alignment: .topLeading) {
+                                        // Левая кнопка info/close (фиксированная позиция)
+                                        Button(action: {
+                                            if infoOpenSkinIds.contains(skin.id) {
+                                                infoOpenSkinIds.remove(skin.id)
+                                            } else {
+                                                infoOpenSkinIds.insert(skin.id)
+                                            }
+                                        }) {
+                                            Image(infoOpenSkinIds.contains(skin.id) ? "closeInfo_button" : "info_button")
+                                                .resizable()
+                                                .aspectRatio(contentMode: .fit)
+                                                .frame(width: 30, height: 30)
+                                                .clipped()
+                                        }
+                                        .padding(.top, 8)
+                                        .padding(.leading, 30)
+                                    }
                             }
                         }
                     }
@@ -211,3 +267,4 @@ struct ShopView: View {
 #Preview {
     ShopView(isPresented: .constant(true))
 }
+ 

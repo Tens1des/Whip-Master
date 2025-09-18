@@ -17,12 +17,13 @@ class GameScene: SKScene, ObservableObject {
     // MARK: - Animals
     private var animals: [SKSpriteNode] = []
     private let animalNames = ["bear_object", "monkey_object", "tiger_object", "elephan_object", "lev_object"]
+    private let animalDarkNames = ["bear_dark", "monkey_dark", "tiger_dark", "elephant_dark", "lion_dark"]
     private struct AnimalUI {
         let panel: SKSpriteNode
         let dots: [SKSpriteNode]
         let clock: SKSpriteNode
         let timeLabel: SKLabelNode
-        let progressSegments: [SKSpriteNode]
+        let progressBar: SKSpriteNode
     }
     private var animalUIs: [AnimalUI] = []
     
@@ -33,13 +34,18 @@ class GameScene: SKScene, ObservableObject {
     
     // MARK: - Animal sequences
     private var animalSequences: [[String]] = [] // последовательности цветов для каждого животного
+    private var animalTargetSequences: [[String]] = [] // целевые последовательности (правильные)
     private let availableColors = ["red_circle", "yellow_circle", "blue_circle", "green_circle"]
-    private let availableProgressColors = ["progress_segment_purple", "progress_segment_red", "progress_segment_orange", "progress_segment_green"]
-    private var animalProgressColors: [[String]] = [] // фиксированные цвета прогресс-бара на старт уровня
     private var animalVisible: [Bool] = [] // текущее состояние видимости
+    private var animalActive: [Bool] = [] // активное состояние животного (светлое/темное)
+    private var animalShowingSequence: [Bool] = [] // показывает ли животное последовательность
+    private var animalSequenceTimer: [TimeInterval] = [] // таймер показа последовательности
     
     // MARK: - Spotlights
-    private var spotlights: [SKSpriteNode] = []
+    private var animalSpotlights: [SKSpriteNode] = [] // прожектор для каждого животного
+    private var spotlightTargetIndex: Int = -1 // на какое животное направлен прожектор
+    private var spotlightTimer: TimeInterval = 0
+    private var spotlightChangeInterval: TimeInterval = 3.0 // интервал смены направления (3 секунды)
     
     // MARK: - Level timer
     @Published var remainingSeconds: Int = 90
@@ -100,19 +106,19 @@ class GameScene: SKScene, ObservableObject {
         
         // Размещаем животных по секторам арены
         setupAnimals()
-        // Размещаем прожекторы (заморожены)
-        // setupSpotlights()
+        // Создаем прожекторы для каждого животного
+        setupAnimalSpotlights()
         
-        // Инициализируем флаги видимости и скрываем всех по умолчанию
+        // Инициализируем флаги видимости - все животные неактивны в начале
         animalVisible = Array(repeating: false, count: animals.count)
+        animalActive = Array(repeating: false, count: animals.count)
         animalFirstAppearance = Array(repeating: false, count: animals.count)
         animalVanish = Array(repeating: false, count: animals.count)
-        hideAllAnimals()
+        animalShowingSequence = Array(repeating: false, count: animals.count)
+        animalSequenceTimer = Array(repeating: 0, count: animals.count)
+        showAllAnimalsAsDark()
         
         isSceneSetup = true
-        
-        // Запускаем цикл показа
-        startVisibilityLoop()
     }
     
     private func setupAnimals() {
@@ -128,10 +134,12 @@ class GameScene: SKScene, ObservableObject {
         let angles: [CGFloat] = [0, 72, 144, 216, 288] // 360/5 = 72 градуса между животными
         
         for (index, rawName) in animalNames.enumerated() {
-            let assetExists = UIImage(named: rawName) != nil
-            let imageName = assetExists ? rawName : "logo_image "
-            if !assetExists {
-                print("[GameScene] Warning: animal asset not found: \(rawName). Using placeholder \(imageName)")
+            // Используем темную версию животного в начале
+            let darkName = animalDarkNames[index]
+            let darkAssetExists = UIImage(named: darkName) != nil
+            let imageName = darkAssetExists ? darkName : "logo_image "
+            if !darkAssetExists {
+                print("[GameScene] Warning: dark animal asset not found: \(darkName). Using placeholder \(imageName)")
             }
             
             let animal = SKSpriteNode(imageNamed: imageName)
@@ -189,17 +197,12 @@ class GameScene: SKScene, ObservableObject {
             timeLabel.zPosition = 15
             addChild(timeLabel)
             
-            // Прогресс-бар из 4 сегментов
-            let segmentNames = ["progress_segment_purple", "progress_segment_red", "progress_segment_orange", "progress_segment_green"]
-            var progressSegments: [SKSpriteNode] = []
-            for segmentName in segmentNames {
-                let segment = SKSpriteNode(imageNamed: segmentName)
-                segment.zPosition = 14
-                addChild(segment)
-                progressSegments.append(segment)
-            }
+            // Простой градиентный прогресс-бар
+            let progressBar = createGradientProgressBar(size: CGSize(width: 100, height: 20))
+            progressBar.zPosition = 14
+            addChild(progressBar)
             
-            animalUIs.append(AnimalUI(panel: panel, dots: dots, clock: clock, timeLabel: timeLabel, progressSegments: progressSegments))
+            animalUIs.append(AnimalUI(panel: panel, dots: dots, clock: clock, timeLabel: timeLabel, progressBar: progressBar))
             
             print("[GameScene] Animal \(rawName) added at position: \(animal.position), zPosition: \(animal.zPosition)")
         }
@@ -212,112 +215,323 @@ class GameScene: SKScene, ObservableObject {
         layoutAnimals() // выравниваем панели сразу
     }
     
-    private func setupSpotlights() {
-        print("[GameScene] setupSpotlights called. Frame size: \(frame.size)")
+    
+    private func setupAnimalSpotlights() {
+        print("[GameScene] setupAnimalSpotlights called. Frame size: \(frame.size)")
         
-        let centerX = frame.midX
-        let centerY = frame.midY
-        let radius = min(frame.width, frame.height) * 0.35
-        let spotlightRadius = min(frame.width, frame.height) * 0.55 // прожекторы дальше от центра
+        // Очищаем массив прожекторов
+        animalSpotlights.removeAll()
         
-        // Позиции для 4 прожекторов (направлены на первые 4 животных)
-        let angles: [CGFloat] = [0, 72, 144, 216] // 360/4 = 90 градусов между прожекторами
-        
-        for (index, angle) in angles.enumerated() {
-            let spotlight = SKSpriteNode(imageNamed: "proector_image")
+        // Создаем прожектор для каждого животного
+        for i in 0..<animals.count {
+            let spotlight = SKSpriteNode(imageNamed: "light_area")
             
             if spotlight.texture == nil {
-                print("[GameScene] ERROR: Failed to create spotlight sprite")
+                print("[GameScene] ERROR: Failed to create spotlight sprite for animal \(i)")
                 continue
             }
             
-            let radianAngle = angle * .pi / 180
-            let x = centerX + spotlightRadius * cos(radianAngle)
-            let y = centerY + spotlightRadius * sin(radianAngle)
-            spotlight.position = CGPoint(x: x, y: y)
+            // Размещаем прожектор ниже животного
+            spotlight.position = animals[i].position
+            spotlight.position.y -= 80 // ниже животного для большего расстояния до прогресс-бара
             
-            // Поворачиваем прожектор к центру (к животному)
-            let targetAngle = atan2(centerY - y, centerX - x)
-            spotlight.zRotation = targetAngle
-            
-            // Масштабируем прожектор
+            // Масштабируем прожектор (делаем больше)
             if let texture = spotlight.texture {
-                let targetHeight = frame.height * 0.50
+                let targetHeight = frame.height * 0.25 // увеличиваем размер
                 let scale = max(0.01, targetHeight / texture.size().height)
                 spotlight.xScale = scale
                 spotlight.yScale = scale
-                print("[GameScene] Spotlight \(index) texture size: \(texture.size()), scale: \(scale)")
+                print("[GameScene] Spotlight \(i) texture size: \(texture.size()), scale: \(scale)")
             }
             
-            spotlight.zPosition = 8 // между фоном и животными
-            spotlight.name = "spotlight_\(index)"
+            spotlight.zPosition = 15 // выше животных (у них zPosition = 10)
+            spotlight.name = "spotlight_\(i)"
+            spotlight.isHidden = true // изначально скрыты
             addChild(spotlight)
-            spotlights.append(spotlight)
+            animalSpotlights.append(spotlight)
             
-            print("[GameScene] Spotlight \(index) added at position: \(spotlight.position), rotation: \(targetAngle)")
+            print("[GameScene] Spotlight \(i) added at position: \(spotlight.position)")
         }
         
-        print("[GameScene] Total spotlights added: \(spotlights.count)")
+        // Начинаем с случайного направления
+        changeSpotlightTarget()
+        
+        print("[GameScene] All animal spotlights created: \(animalSpotlights.count)")
+    }
+    
+    private func changeSpotlightTarget() {
+        guard !animals.isEmpty, !animalSpotlights.isEmpty else { return }
+        
+        // Скрываем все прожекторы и возвращаем животных в темное состояние
+        for (index, spotlight) in animalSpotlights.enumerated() {
+            spotlight.isHidden = true
+            // Возвращаем только скин животного в темное состояние, если оно было освещено
+            if index == spotlightTargetIndex {
+                hideAnimalSkin(at: index)
+            }
+        }
+        
+        // Выбираем случайное животное
+        let newTarget = Int.random(in: 0..<animals.count)
+        spotlightTargetIndex = newTarget
+        
+        // Показываем прожектор для выбранного животного
+        if newTarget < animalSpotlights.count {
+            let spotlight = animalSpotlights[newTarget]
+            spotlight.isHidden = false
+            
+            // Обновляем позицию прожектора (следуем за животным)
+            spotlight.position = animals[newTarget].position
+            spotlight.position.y += 20 // ниже животного для большего расстояния до прогресс-бара
+            
+            // Меняем только скин животного с темной версии на светлую (без панели)
+            showAnimalSkin(at: newTarget)
+            
+            print("[GameScene] Spotlight \(newTarget) now targeting animal \(newTarget)")
+        }
+        
+        // Показываем таймер для освещенного животного
+        showAnimalTimer(for: newTarget)
+    }
+    
+    private func showAnimalTimer(for index: Int) {
+        guard index < animals.count, index < animalUIs.count else { return }
+        
+        // Показываем таймер и прогресс-бар для освещенного животного
+        let ui = animalUIs[index]
+        ui.clock.isHidden = false
+        ui.timeLabel.isHidden = false
+        ui.progressBar.isHidden = false
+        
+        print("[GameScene] Showing timer for animal \(index)")
+    }
+    
+    private func hideAnimalTimer(for index: Int) {
+        guard index < animals.count, index < animalUIs.count else { return }
+        
+        // Скрываем таймер и прогресс-бар
+        let ui = animalUIs[index]
+        ui.clock.isHidden = true
+        ui.timeLabel.isHidden = true
+        ui.progressBar.isHidden = true
+        
+        print("[GameScene] Hiding timer for animal \(index)")
     }
     
     private func generateRandomSequences() {
         animalSequences.removeAll()
-        animalProgressColors.removeAll()
+        animalTargetSequences.removeAll()
         
         for _ in 0..<animals.count {
-            // Генерируем РАЗНЫЕ 4 цвета в случайном порядке для кругов
-            let sequence = Array(availableColors.shuffled().prefix(4))
-            animalSequences.append(sequence)
+            // Генерируем РАЗНЫЕ 4 цвета в случайном порядке для кругов (текущее состояние)
+            let currentSequence = Array(availableColors.shuffled().prefix(4))
+            animalSequences.append(currentSequence)
             
-            // Генерируем фиксированный порядок цветов прогресс-бара (тоже перемешанный один раз)
-            let progress = availableProgressColors.shuffled()
-            animalProgressColors.append(progress)
+            // Генерируем целевую последовательность (правильную)
+            let targetSequence = Array(availableColors.shuffled().prefix(4))
+            animalTargetSequences.append(targetSequence)
         }
         
-        print("[GameScene] Generated sequences: \(animalSequences)")
-        print("[GameScene] Generated progress colors: \(animalProgressColors)")
+        print("[GameScene] Generated current sequences: \(animalSequences)")
+        print("[GameScene] Generated target sequences: \(animalTargetSequences)")
+    }
+    
+    // MARK: - Helper functions
+    private func createGradientProgressBar(size: CGSize) -> SKSpriteNode {
+        // Создаем изображение с градиентом
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { context in
+            let cgContext = context.cgContext
+            
+            // Создаем градиент от фиолетового к зеленому
+            let colors = [
+                UIColor(red: 0.8, green: 0.6, blue: 1.0, alpha: 1.0).cgColor, // светло-фиолетовый
+                UIColor(red: 1.0, green: 0.4, blue: 0.4, alpha: 1.0).cgColor, // красный
+                UIColor(red: 1.0, green: 0.7, blue: 0.3, alpha: 1.0).cgColor, // оранжевый
+                UIColor(red: 0.4, green: 0.9, blue: 0.4, alpha: 1.0).cgColor  // зеленый
+            ]
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: [0.0, 0.33, 0.66, 1.0])!
+            
+            // Рисуем закругленный прямоугольник с градиентом
+            let rect = CGRect(origin: .zero, size: size)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: size.height / 3)
+            cgContext.addPath(path.cgPath)
+            cgContext.clip()
+            
+            cgContext.drawLinearGradient(gradient, start: CGPoint(x: 0, y: 0), end: CGPoint(x: size.width, y: 0), options: [])
+        }
+        
+        let progressBar = SKSpriteNode(texture: SKTexture(image: image))
+        return progressBar
     }
     
     // MARK: - Visibility control
-    private func startVisibilityLoop() {
-        // Периодически (каждые 5 сек) выбираем 1–2 случайных животных для показа
-        let wait = SKAction.wait(forDuration: 5.0)
-        let cycle = SKAction.run { [weak self] in
-            guard let self else { return }
-            let countToShow = Int.random(in: 1...2)
-            var indices = Array(0..<self.animals.count).shuffled()
-            // Исключаем исчезнувших животных
-            indices = indices.filter { !self.animalVanish[$0] }
-            indices = Array(indices.prefix(countToShow))
-            self.showAnimals(indices: indices)
-        }
-        let sequence = SKAction.sequence([wait, cycle])
-        run(SKAction.repeatForever(sequence), withKey: "visibilityLoop")
-    }
-    
-    private func showAnimals(indices: [Int]) {
-        hideAllAnimals()
-        
-        for i in indices {
-            guard i < animals.count, i < animalUIs.count, i < animalVisible.count else { continue }
+    private func showAllAnimalsAsDark() {
+        // Показываем всех животных в темном состоянии (без панелей и таймеров)
+        for i in 0..<animals.count {
+            guard i < animalUIs.count, i < animalVisible.count else { continue }
             guard !animalVanish[i] else { continue } // Не показываем исчезнувших
             
-            // Если это первое появление животного - сбрасываем таймер
-            if i < animalFirstAppearance.count && !animalFirstAppearance[i] {
-                animalTimers[i] = 30
-                animalFirstAppearance[i] = true
-                print("[GameScene] First appearance for animal \(i), timer reset to 30")
-            }
+            animalVisible[i] = true
+            animalActive[i] = false // Темное состояние
+            animals[i].isHidden = false
+            
+            // Скрываем панели и таймеры
+            let ui = animalUIs[i]
+            ui.panel.isHidden = true
+            ui.clock.isHidden = true
+            ui.timeLabel.isHidden = true
+            ui.progressBar.isHidden = true
+            for dot in ui.dots { dot.isHidden = true }
+        }
+    }
+    
+    private func showAllAnimals() {
+        // Показываем всех животных в активном состоянии (с панелями и таймерами)
+        for i in 0..<animals.count {
+            guard i < animalUIs.count, i < animalVisible.count else { continue }
+            guard !animalVanish[i] else { continue } // Не показываем исчезнувших
             
             animalVisible[i] = true
+            animalActive[i] = true // Активное состояние
             animals[i].isHidden = false
+            
+            // Показываем только панели (без таймеров)
             let ui = animalUIs[i]
             ui.panel.isHidden = false
-            ui.clock.isHidden = false
-            ui.timeLabel.isHidden = false
+            ui.clock.isHidden = true
+            ui.timeLabel.isHidden = true
+            ui.progressBar.isHidden = true
             for dot in ui.dots { dot.isHidden = false }
-            for seg in ui.progressSegments { seg.isHidden = false }
         }
+    }
+    
+    private func activateAnimal(at index: Int) {
+        guard index < animals.count, index < animalUIs.count, index < animalActive.count else { return }
+        guard !animalVanish[index] else { return }
+        
+        // Переключаем на светлую версию животного
+        let lightName = animalNames[index]
+        let lightAssetExists = UIImage(named: lightName) != nil
+        let imageName = lightAssetExists ? lightName : "logo_image "
+        
+        let newTexture = SKTexture(imageNamed: imageName)
+        animals[index].texture = newTexture
+        
+        // Активируем животное
+        animalActive[index] = true
+        animalVisible[index] = true
+        
+        // Показываем только панель с цветами (без таймера и прогресс-бара)
+        let ui = animalUIs[index]
+        ui.panel.isHidden = false
+        ui.clock.isHidden = true
+        ui.timeLabel.isHidden = true
+        ui.progressBar.isHidden = true
+        for dot in ui.dots { dot.isHidden = false }
+        
+        // Запускаем логику показа последовательности
+        startSequenceShow(for: index)
+        
+        print("[GameScene] Animal \(index) activated")
+    }
+    
+    private func startSequenceShow(for index: Int) {
+        guard index < animalTargetSequences.count else { return }
+        
+        // Показываем целевую последовательность
+        animalSequences[index] = animalTargetSequences[index]
+        updateAnimalUI(for: index)
+        
+        // Устанавливаем флаг показа последовательности
+        animalShowingSequence[index] = true
+        animalSequenceTimer[index] = 2.0 // 2 секунды показа
+        
+        print("[GameScene] Showing target sequence for animal \(index): \(animalTargetSequences[index])")
+    }
+    
+    private func shuffleSequence(for index: Int) {
+        guard index < animalSequences.count else { return }
+        
+        // Перемешиваем текущую последовательность
+        animalSequences[index] = Array(availableColors.shuffled().prefix(4))
+        updateAnimalUI(for: index)
+        
+        // Сбрасываем флаг показа последовательности
+        animalShowingSequence[index] = false
+        
+        print("[GameScene] Shuffled sequence for animal \(index): \(animalSequences[index])")
+    }
+    
+    private func checkSequenceMatch(for index: Int) {
+        guard index < animalSequences.count && index < animalTargetSequences.count else { return }
+        
+        let currentSequence = animalSequences[index]
+        let targetSequence = animalTargetSequences[index]
+        
+        // Проверяем точное совпадение последовательностей
+        let isMatch = currentSequence.elementsEqual(targetSequence) { current, target in
+            return current == target
+        }
+        
+        if isMatch {
+            print("[GameScene] Sequence match! Animal \(index) gets +10 seconds and hides")
+            
+            // Продлеваем таймер животного на 10 секунд
+            if index < animalTimers.count {
+                animalTimers[index] += 10
+            }
+            
+            // Скрываем животное (возвращаем в темное состояние)
+            hideAnimal(at: index)
+        }
+    }
+    
+    private func hideAnimal(at index: Int) {
+        guard index < animals.count, index < animalUIs.count else { return }
+        
+        // Переключаем на темную версию животного
+        let darkName = animalDarkNames[index]
+        let darkAssetExists = UIImage(named: darkName) != nil
+        let imageName = darkAssetExists ? darkName : "logo_image "
+        
+        let newTexture = SKTexture(imageNamed: imageName)
+        animals[index].texture = newTexture
+        
+        // Деактивируем животное
+        animalActive[index] = false
+        
+        // Скрываем панель
+        let ui = animalUIs[index]
+        ui.panel.isHidden = true
+        for dot in ui.dots { dot.isHidden = true }
+        
+        // Сбрасываем флаги последовательности
+        animalShowingSequence[index] = false
+        animalSequenceTimer[index] = 0
+        
+        print("[GameScene] Animal \(index) hidden")
+    }
+    
+    private func showAnimalSkin(at index: Int) {
+        guard index < animals.count, index < animalActive.count else { return }
+        
+        // Меняем только скин на светлую версию (без активации панели)
+        let lightName = animalNames[index]
+        animals[index].texture = SKTexture(imageNamed: lightName)
+        
+        print("[GameScene] Animal \(index) skin shown (light version)")
+    }
+    
+    private func hideAnimalSkin(at index: Int) {
+        guard index < animals.count, index < animalActive.count else { return }
+        
+        // Меняем скин обратно на темную версию
+        let darkName = animalDarkNames[index]
+        animals[index].texture = SKTexture(imageNamed: darkName)
+        
+        print("[GameScene] Animal \(index) skin hidden (dark version)")
     }
     
     private func hideAllAnimals() {
@@ -331,8 +545,8 @@ class GameScene: SKScene, ObservableObject {
                 ui.panel.isHidden = true
                 ui.clock.isHidden = true
                 ui.timeLabel.isHidden = true
+                ui.progressBar.isHidden = true
                 for dot in ui.dots { dot.isHidden = true }
-                for seg in ui.progressSegments { seg.isHidden = true }
             }
         }
     }
@@ -351,29 +565,31 @@ class GameScene: SKScene, ObservableObject {
             }
         }
         
-        // Устанавливаем цвета прогресс-бара, сгенерированные на старте уровня
-        if index < animalProgressColors.count {
-            let progressColors = animalProgressColors[index]
-            for (i, segment) in ui.progressSegments.enumerated() {
-                if i < progressColors.count {
-                    segment.texture = SKTexture(imageNamed: progressColors[i])
-                }
-            }
-        }
+        // Кастомные сегменты прогресс-бара остаются фиксированными
+        // (фиолетовый, красный, оранжевый, зеленый)
     }
     
     private func layoutAnimals() {
         guard !animals.isEmpty else { return }
         
-        // Инициализируем animalVisible если не инициализирован
+        // Инициализируем массивы если не инициализированы
         if animalVisible.isEmpty {
             animalVisible = Array(repeating: false, count: animals.count)
+        }
+        if animalActive.isEmpty {
+            animalActive = Array(repeating: false, count: animals.count)
         }
         if animalFirstAppearance.isEmpty {
             animalFirstAppearance = Array(repeating: false, count: animals.count)
         }
         if animalVanish.isEmpty {
             animalVanish = Array(repeating: false, count: animals.count)
+        }
+        if animalShowingSequence.isEmpty {
+            animalShowingSequence = Array(repeating: false, count: animals.count)
+        }
+        if animalSequenceTimer.isEmpty {
+            animalSequenceTimer = Array(repeating: 0, count: animals.count)
         }
         
         let centerX = frame.midX
@@ -405,50 +621,57 @@ class GameScene: SKScene, ObservableObject {
                 animal.yScale = scale
             }
             
-            // Панель и кружки
+            // Панель и кружки (только для активных животных)
             let ui = animalUIs[index]
+            let isActive = index < animalActive.count ? animalActive[index] : false
+            
             ui.panel.size = CGSize(width: panelWidth, height: panelHeight)
             ui.panel.position = CGPoint(x: x, y: y + panelOffsetY)
+            ui.panel.isHidden = !isActive
             
             let spacing = panelWidth * 0.20
             let startX = ui.panel.position.x - (1.5 * spacing)
             for (i, dot) in ui.dots.enumerated() {
                 dot.size = CGSize(width: dotSize, height: dotSize)
                 dot.position = CGPoint(x: startX + CGFloat(i) * spacing, y: ui.panel.position.y + panelHeight * 0.10)
+                dot.isHidden = !isActive
             }
             
-            // Таймер: часы + время + прогресс-бар
-            let timerY = y + timerOffsetY
-            let clockSize = frame.height * 0.08
-            ui.clock.size = CGSize(width: clockSize, height: clockSize)
-            ui.clock.position = CGPoint(x: x - panelWidth * 0.35, y: timerY)
+            // Таймер и прогресс-бар показываются только для освещенного животного
+            let isIlluminated = (index == spotlightTargetIndex)
+            ui.clock.isHidden = !isIlluminated
+            ui.timeLabel.isHidden = !isIlluminated
+            ui.progressBar.isHidden = !isIlluminated
             
-            // Прогресс-бар из 4 сегментов — сразу справа от часов
-            let segmentWidth = panelWidth * 0.15
-            let segmentHeight = frame.height * 0.03
-            let segmentSpacing = segmentWidth * 0.1
-            let progressStartX = ui.clock.position.x + (ui.clock.size.width * 0.6) + segmentSpacing
-            let totalBarWidth = (segmentWidth * 4) + (segmentSpacing * 3)
-            
-            for (i, segment) in ui.progressSegments.enumerated() {
-                segment.size = CGSize(width: segmentWidth, height: segmentHeight)
-                let segmentX = progressStartX + CGFloat(i) * (segmentWidth + segmentSpacing)
-                segment.position = CGPoint(x: segmentX, y: timerY)
+            // Если животное освещено, обновляем позицию таймера
+            if isIlluminated {
+                let timerY = y + timerOffsetY
+                let clockSize = frame.height * 0.08
+                ui.clock.size = CGSize(width: clockSize, height: clockSize)
+                ui.clock.position = CGPoint(x: x - panelWidth * 0.35, y: timerY)
                 
-            // Скрываем сегменты по мере истечения времени, но только если животное видимо
-            let remainingTime = animalTimers[index]
-            let totalTime = 30
-            let visibleSegments = max(1, Int(4 * remainingTime / totalTime))
-            let isAnimalVisible = index < animalVisible.count ? animalVisible[index] : false
-            segment.isHidden = !isAnimalVisible || i >= visibleSegments
+                // Простой градиентный прогресс-бар — правее от часов
+                let barWidth = panelWidth * 0.5
+                let barHeight = frame.height * 0.03
+                let progressStartX = ui.clock.position.x + (ui.clock.size.width * 0.6) + 5
+                
+                // Анимируем прогресс-бар в зависимости от оставшегося времени
+                let remainingTime = animalTimers[index]
+                let totalTime = 30
+                let progress = max(0, CGFloat(remainingTime) / CGFloat(totalTime))
+                let currentWidth = barWidth * progress
+                
+                // Обновляем размер и позицию прогресс-бара
+                ui.progressBar.size = CGSize(width: currentWidth, height: barHeight)
+                ui.progressBar.position = CGPoint(x: progressStartX + currentWidth / 2, y: timerY)
+                
+                // Время — над прогресс-баром
+                ui.timeLabel.text = String(format: "%02d:%02d", animalTimers[index] / 60, animalTimers[index] % 60)
+                ui.timeLabel.horizontalAlignmentMode = .center
+                ui.timeLabel.verticalAlignmentMode = .center
+                ui.timeLabel.fontSize = max(14, frame.height * 0.025)
+                ui.timeLabel.position = CGPoint(x: progressStartX + barWidth / 2, y: timerY + barHeight * 1.2)
             }
-            
-            // Время — над началом прогресс-бара (над первым сегментом)
-            ui.timeLabel.text = String(format: "%02d:%02d", animalTimers[index] / 60, animalTimers[index] % 60)
-            ui.timeLabel.horizontalAlignmentMode = .center
-            ui.timeLabel.verticalAlignmentMode = .center
-            ui.timeLabel.fontSize = max(14, frame.height * 0.025) // уменьшил размер шрифта
-            ui.timeLabel.position = CGPoint(x: progressStartX + segmentWidth / 2, y: timerY + segmentHeight * 1.2)
             
             // Обновляем UI с рандомными последовательностями
             updateAnimalUI(for: index)
@@ -463,31 +686,6 @@ class GameScene: SKScene, ObservableObject {
         }
     }
     
-    private func layoutSpotlights() {
-        guard !spotlights.isEmpty else { return }
-        let centerX = frame.midX
-        let centerY = frame.midY
-        let spotlightRadius = min(frame.width, frame.height) * 0.55
-        let angles: [CGFloat] = [0, 72, 144, 216]
-        
-        for (index, spotlight) in spotlights.enumerated() {
-            let angle = angles[index] * .pi / 180
-            let x = centerX + spotlightRadius * cos(angle)
-            let y = centerY + spotlightRadius * sin(angle)
-            spotlight.position = CGPoint(x: x, y: y)
-            
-            // Поворачиваем прожектор к центру
-            let targetAngle = atan2(centerY - y, centerX - x)
-            spotlight.zRotation = targetAngle
-            
-            if let texture = spotlight.texture {
-                let targetHeight = frame.height * 0.20
-                let scale = max(0.01, targetHeight / texture.size().height)
-                spotlight.xScale = scale
-                spotlight.yScale = scale
-            }
-        }
-    }
     
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
@@ -505,13 +703,26 @@ class GameScene: SKScene, ObservableObject {
     }
     
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        // Перетаскивание цветных кругов
         guard let touch = touches.first else { return }
         let location = touch.location(in: self)
         
-        // Ищем, на какой точке нажали
+        // Сначала проверяем нажатие на темных животных для активации
+        for (index, animal) in animals.enumerated() {
+            if !animalVisible.indices.contains(index) || !animalVisible[index] { continue }
+            if animalActive.indices.contains(index) && animalActive[index] { continue } // Уже активное
+            
+            if animal.contains(location) {
+                print("[GameScene] Touched dark animal \(index), activating...")
+                activateAnimal(at: index)
+                return
+            }
+        }
+        
+        // Затем проверяем перетаскивание цветных кругов (только для активных животных)
         for (index, ui) in animalUIs.enumerated() {
             if !animalVisible.indices.contains(index) || !animalVisible[index] { continue }
+            if !animalActive.indices.contains(index) || !animalActive[index] { continue } // Только активные
+            
             for dot in ui.dots {
                 if dot.contains(location) {
                     dot.userData = ["dragging": true, "animalIndex": index]
@@ -569,8 +780,8 @@ class GameScene: SKScene, ObservableObject {
                     updateAnimalUI(for: index)
                     layoutAnimals()
                     
-                    // Проверяем совпадение цветов прогресс-бара и панели
-                    checkColorMatch(for: index)
+                    // Проверяем правильность комбинации
+                    checkSequenceMatch(for: index)
                     return
                 }
             }
@@ -593,6 +804,31 @@ class GameScene: SKScene, ObservableObject {
                 if animalTimers[i] > 0 {
                     animalTimers[i] -= 1
                 }
+            }
+            
+            // Обрабатываем таймеры показа последовательности
+            for i in 0..<animalSequenceTimer.count {
+                if animalShowingSequence[i] && animalSequenceTimer[i] > 0 {
+                    animalSequenceTimer[i] -= 1.0
+                    if animalSequenceTimer[i] <= 0 {
+                        // Время показа истекло - перемешиваем последовательность
+                        shuffleSequence(for: i)
+                    }
+                }
+            }
+            
+            // Обрабатываем смену направления прожектора
+            spotlightTimer += 1.0
+            if spotlightTimer >= spotlightChangeInterval {
+                spotlightTimer = 0
+                
+                // Скрываем таймер предыдущего животного
+                if spotlightTargetIndex >= 0 && spotlightTargetIndex < animals.count {
+                    hideAnimalTimer(for: spotlightTargetIndex)
+                }
+                
+                // Меняем направление прожектора
+                changeSpotlightTarget()
             }
             
             // Перерисовываем UI
@@ -648,12 +884,22 @@ class GameScene: SKScene, ObservableObject {
         animalTimers = [30, 30, 30, 30, 30]
         animalVanish = Array(repeating: false, count: animals.count)
         animalVisible = Array(repeating: false, count: animals.count)
+        animalActive = Array(repeating: false, count: animals.count)
         animalFirstAppearance = Array(repeating: false, count: animals.count)
+        animalShowingSequence = Array(repeating: false, count: animals.count)
+        animalSequenceTimer = Array(repeating: 0, count: animals.count)
         
-        // Останавливаем текущий цикл и запускаем новый
-        removeAction(forKey: "visibilityLoop")
-        hideAllAnimals()
-        startVisibilityLoop()
+        // Сбрасываем состояние прожекторов
+        spotlightTargetIndex = -1
+        spotlightTimer = 0
+        
+        // Скрываем все прожекторы
+        for spotlight in animalSpotlights {
+            spotlight.isHidden = true
+        }
+        
+        // Показываем всех животных в темном состоянии
+        showAllAnimalsAsDark()
         
         print("[GameScene] Game reset")
     }
@@ -671,42 +917,14 @@ class GameScene: SKScene, ObservableObject {
         }
     }
     
-    
-    // MARK: - Color matching
-    private func checkColorMatch(for animalIndex: Int) {
-        guard animalIndex < animalSequences.count && animalIndex < animalProgressColors.count else { return }
-        
-        let panelColors = animalSequences[animalIndex]
-        let progressColors = animalProgressColors[animalIndex]
-        
-        // Маппинг цветов: progress_segment -> panel_circle
-        let colorMapping: [String: String] = [
-            "progress_segment_purple": "blue_circle",
-            "progress_segment_red": "red_circle", 
-            "progress_segment_orange": "yellow_circle",
-            "progress_segment_green": "green_circle"
-        ]
-        
-        // Проверяем точное совпадение последовательностей
-        let isMatch = panelColors.elementsEqual(progressColors) { panelColor, progressColor in
-            let mappedProgressColor = colorMapping[progressColor] ?? progressColor
-            return panelColor == mappedProgressColor
-        }
-        
-        if isMatch {
-            print("[GameScene] Color match! Animal \(animalIndex) vanishes forever")
-            print("[GameScene] Panel: \(panelColors), Progress: \(progressColors)")
-            animalVanish[animalIndex] = true
-            animalVisible[animalIndex] = false
-            
-            // Скрываем животное и его UI
-            animals[animalIndex].isHidden = true
-            let ui = animalUIs[animalIndex]
-            ui.panel.isHidden = true
-            ui.clock.isHidden = true
-            ui.timeLabel.isHidden = true
-            for dot in ui.dots { dot.isHidden = true }
-            for seg in ui.progressSegments { seg.isHidden = true }
-        }
+    // MARK: - Public functions for animal activation
+    func activateAnimalPublic(at index: Int) {
+        activateAnimal(at: index)
     }
+    
+    func isAnimalActive(at index: Int) -> Bool {
+        guard index < animalActive.count else { return false }
+        return animalActive[index]
+    }
+    
 }
