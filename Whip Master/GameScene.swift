@@ -40,6 +40,10 @@ class GameScene: SKScene, ObservableObject {
     private var animalActive: [Bool] = [] // активное состояние животного (светлое/темное)
     private var animalShowingSequence: [Bool] = [] // показывает ли животное последовательность
     private var animalSequenceTimer: [TimeInterval] = [] // таймер показа последовательности
+    private var animalCurrentTapIndex: [Int] = [] // текущий индекс в последовательности тапов
+    private var animalSequenceOrder: [[Int]] = [] // порядок показа больших шаров для каждого животного
+    private var animalCurrentSequenceIndex: [Int] = [] // текущий индекс в анимации последовательности
+    private var animalSequenceAnimationTimer: [TimeInterval] = [] // таймер анимации последовательности
     
     // MARK: - Spotlights
     private var animalSpotlights: [SKSpriteNode] = [] // прожектор для каждого животного
@@ -48,6 +52,15 @@ class GameScene: SKScene, ObservableObject {
     private var spotlightChangeInterval: TimeInterval = 3.0 // интервал смены направления (3 секунды)
     private var spotlightAngle: CGFloat = 0 // текущий угол прожектора
     private var spotlightRotationSpeed: CGFloat = 0.02 // скорость вращения прожектора (радиан за кадр)
+    
+    // Хаотичные прожекторы
+    private var chaoticSpotlights: [SKSpriteNode] = [] // хаотичные прожекторы
+    private var chaoticSpotlightPositions: [CGPoint] = [] // текущие позиции хаотичных прожекторов
+    private var chaoticSpotlightVelocities: [CGPoint] = [] // скорости хаотичных прожекторов
+    private var chaoticSpotlightTargetPositions: [CGPoint] = [] // целевые позиции хаотичных прожекторов
+    private var chaoticSpotlightChangeTimers: [TimeInterval] = [] // таймеры смены направления
+    private var chaoticSpotlightChangeInterval: TimeInterval = 2.0 // интервал смены направления (2 секунды)
+    private var chaoticSpotlightSpeed: CGFloat = 80 // скорость движения хаотичных прожекторов
     
     // MARK: - Level timer
     @Published var remainingSeconds: Int = 90
@@ -173,14 +186,17 @@ class GameScene: SKScene, ObservableObject {
             addChild(animal)
             animals.append(animal)
             
-            // UI: панель + 4 цветные круги
+            // UI: панель + 5 цветных кругов
             let panel = SKSpriteNode(imageNamed: "panelColor_panel")
             panel.zPosition = 12
             addChild(panel)
             
             let colors = ["red_circle", "yellow_circle", "blue_circle", "green_circle"]
             var dots: [SKSpriteNode] = []
-            for colorName in colors {
+            // Создаем 5 кругов (один цвет будет повторяться)
+            for i in 0..<5 {
+                let colorIndex = i % colors.count // циклически используем 4 цвета
+                let colorName = colors[colorIndex]
                 let dot = SKSpriteNode(imageNamed: colorName)
                 dot.zPosition = 13
                 addChild(dot)
@@ -221,8 +237,13 @@ class GameScene: SKScene, ObservableObject {
     private func setupAnimalSpotlights() {
         print("[GameScene] setupAnimalSpotlights called. Frame size: \(frame.size)")
         
-        // Очищаем массив прожекторов
+        // Очищаем массивы прожекторов
         animalSpotlights.removeAll()
+        chaoticSpotlights.removeAll()
+        chaoticSpotlightPositions.removeAll()
+        chaoticSpotlightVelocities.removeAll()
+        chaoticSpotlightTargetPositions.removeAll()
+        chaoticSpotlightChangeTimers.removeAll()
         
         // Создаем один вращающийся прожектор
         let spotlight = SKSpriteNode(imageNamed: "light_area")
@@ -253,7 +274,137 @@ class GameScene: SKScene, ObservableObject {
         // Инициализируем угол
         spotlightAngle = 0
         
+        // Создаем два хаотичных прожектора
+        for i in 0..<2 {
+            let chaoticSpotlight = SKSpriteNode(imageNamed: "light_area")
+            
+            if chaoticSpotlight.texture == nil {
+                print("[GameScene] ERROR: Failed to create chaotic spotlight sprite \(i)")
+                continue
+            }
+            
+            // Размещаем в случайной позиции в пределах арены
+            let arenaRadius = min(frame.width, frame.height) * 0.35
+            let centerX = frame.midX
+            let centerY = frame.midY
+            let angle = Double.random(in: 0...(2 * Double.pi))
+            let distance = Double.random(in: 0...Double(arenaRadius))
+            
+            let position = CGPoint(
+                x: centerX + CGFloat(distance * cos(angle)),
+                y: centerY + CGFloat(distance * sin(angle))
+            )
+            
+            chaoticSpotlight.position = position
+            
+            // Масштабируем прожектор
+            if let texture = chaoticSpotlight.texture {
+                let targetHeight = frame.height * 0.25 // немного меньше основного
+                let scale = max(0.01, targetHeight / texture.size().height)
+                chaoticSpotlight.xScale = scale
+                chaoticSpotlight.yScale = scale
+            }
+            
+            chaoticSpotlight.zPosition = 15
+            chaoticSpotlight.name = "chaotic_spotlight_\(i)"
+            chaoticSpotlight.isHidden = false
+            addChild(chaoticSpotlight)
+            chaoticSpotlights.append(chaoticSpotlight)
+            chaoticSpotlightPositions.append(position)
+            chaoticSpotlightVelocities.append(CGPoint.zero)
+            chaoticSpotlightTargetPositions.append(position)
+            chaoticSpotlightChangeTimers.append(0)
+            
+            // Генерируем первую целевую позицию
+            generateNewChaoticTarget(for: i)
+        }
+        
         print("[GameScene] Rotating spotlight created at position: \(spotlight.position)")
+        print("[GameScene] Created \(chaoticSpotlights.count) chaotic spotlights")
+    }
+    
+    private func generateNewChaoticTarget(for index: Int) {
+        guard index < chaoticSpotlightTargetPositions.count else { return }
+        
+        // Генерируем случайную позицию в пределах арены
+        let arenaRadius = min(frame.width, frame.height) * 0.35
+        let centerX = frame.midX
+        let centerY = frame.midY
+        
+        // Случайный угол и расстояние
+        let angle = Double.random(in: 0...(2 * Double.pi))
+        let distance = Double.random(in: 0...Double(arenaRadius))
+        
+        chaoticSpotlightTargetPositions[index] = CGPoint(
+            x: centerX + CGFloat(distance * cos(angle)),
+            y: centerY + CGFloat(distance * sin(angle))
+        )
+        
+        print("[GameScene] New chaotic target for spotlight \(index): \(chaoticSpotlightTargetPositions[index])")
+    }
+    
+    private func updateChaoticSpotlights() {
+        guard !chaoticSpotlights.isEmpty else { return }
+        
+        for i in 0..<chaoticSpotlights.count {
+            guard i < chaoticSpotlightPositions.count && i < chaoticSpotlightVelocities.count else { continue }
+            
+            // Обновляем таймер смены направления
+            chaoticSpotlightChangeTimers[i] += 1.0 / 60.0 // предполагаем 60 FPS
+            
+            // Если пришло время сменить направление
+            if chaoticSpotlightChangeTimers[i] >= chaoticSpotlightChangeInterval {
+                chaoticSpotlightChangeTimers[i] = 0
+                generateNewChaoticTarget(for: i)
+            }
+            
+            // Вычисляем направление к целевой позиции
+            let targetPos = chaoticSpotlightTargetPositions[i]
+            let currentPos = chaoticSpotlightPositions[i]
+            let dx = targetPos.x - currentPos.x
+            let dy = targetPos.y - currentPos.y
+            let distance = sqrt(dx * dx + dy * dy)
+            
+            // Если мы близко к цели, выбираем новую
+            if distance < 20 {
+                generateNewChaoticTarget(for: i)
+            }
+            
+            // Нормализуем направление и применяем скорость
+            if distance > 0 {
+                let normalizedX = dx / distance
+                let normalizedY = dy / distance
+                
+                chaoticSpotlightVelocities[i] = CGPoint(
+                    x: normalizedX * chaoticSpotlightSpeed / 60.0, // делим на 60 для FPS
+                    y: normalizedY * chaoticSpotlightSpeed / 60.0
+                )
+            }
+            
+            // Обновляем позицию
+            chaoticSpotlightPositions[i].x += chaoticSpotlightVelocities[i].x
+            chaoticSpotlightPositions[i].y += chaoticSpotlightVelocities[i].y
+            
+            // Ограничиваем движение в пределах арены
+            let arenaRadius = min(frame.width, frame.height) * 0.4
+            let centerX = frame.midX
+            let centerY = frame.midY
+            
+            let distanceFromCenter = sqrt(
+                (chaoticSpotlightPositions[i].x - centerX) * (chaoticSpotlightPositions[i].x - centerX) +
+                (chaoticSpotlightPositions[i].y - centerY) * (chaoticSpotlightPositions[i].y - centerY)
+            )
+            
+            if distanceFromCenter > arenaRadius {
+                // Возвращаем прожектор в пределы арены
+                let angle = atan2(chaoticSpotlightPositions[i].y - centerY, chaoticSpotlightPositions[i].x - centerX)
+                chaoticSpotlightPositions[i].x = centerX + arenaRadius * cos(angle)
+                chaoticSpotlightPositions[i].y = centerY + arenaRadius * sin(angle)
+            }
+            
+            // Обновляем позицию спрайта
+            chaoticSpotlights[i].position = chaoticSpotlightPositions[i]
+        }
     }
     
     private func updateSpotlightRotation() {
@@ -340,20 +491,44 @@ class GameScene: SKScene, ObservableObject {
     private func generateRandomSequences() {
         animalSequences.removeAll()
         animalTargetSequences.removeAll()
+        animalCurrentTapIndex.removeAll()
+        animalSequenceOrder.removeAll()
+        animalCurrentSequenceIndex.removeAll()
+        animalSequenceAnimationTimer.removeAll()
         
         for _ in 0..<animals.count {
-            // Генерируем РАЗНЫЕ 4 цвета в случайном порядке для кругов (текущее состояние)
-            let currentSequence = Array(availableColors.shuffled().prefix(4))
+            // Генерируем 5 цветов (4 разных + 1 повторяющийся) для кругов (текущее состояние)
+            let currentSequence = generateFiveColorSequence()
             animalSequences.append(currentSequence)
             
             // Генерируем целевую последовательность (правильную)
-            let targetSequence = Array(availableColors.shuffled().prefix(4))
+            let targetSequence = generateFiveColorSequence()
             animalTargetSequences.append(targetSequence)
+            
+            // Генерируем случайный порядок показа больших шаров (все 5 позиций в случайном порядке)
+            let sequenceOrder = Array(0..<5).shuffled()
+            animalSequenceOrder.append(sequenceOrder)
+            
+            animalCurrentTapIndex.append(0) // начинаем с первого шара
+            animalCurrentSequenceIndex.append(0) // начинаем анимацию с первого шара
+            animalSequenceAnimationTimer.append(0) // таймер анимации
         }
         
         print("[GameScene] Generated current sequences: \(animalSequences)")
         print("[GameScene] Generated target sequences: \(animalTargetSequences)")
+        print("[GameScene] Generated sequence orders: \(animalSequenceOrder)")
     }
+    
+    private func generateFiveColorSequence() -> [String] {
+        // Берем все 4 цвета
+        var sequence = availableColors
+        // Добавляем один случайный цвет повторно
+        let randomColor = availableColors.randomElement()!
+        sequence.append(randomColor)
+        // Перемешиваем
+        return sequence.shuffled()
+    }
+    
     
     // MARK: - Helper functions
     private func createGradientProgressBar(size: CGSize) -> SKSpriteNode {
@@ -459,28 +634,56 @@ class GameScene: SKScene, ObservableObject {
     private func startSequenceShow(for index: Int) {
         guard index < animalTargetSequences.count else { return }
         
-        // Показываем целевую последовательность
-        animalSequences[index] = animalTargetSequences[index]
+        // Показываем целевую последовательность (копируем массив)
+        animalSequences[index] = Array(animalTargetSequences[index])
         updateAnimalUI(for: index)
         
         // Устанавливаем флаг показа последовательности
         animalShowingSequence[index] = true
-        animalSequenceTimer[index] = 5.0 // 5 секунд показа
+        animalSequenceTimer[index] = 50.0 // 25 секунд показа (5 шаров * 4 сек + буфер)
         
-        print("[GameScene] Showing target sequence for animal \(index): \(animalTargetSequences[index])")
+        // Запускаем анимацию последовательности
+        animalCurrentSequenceIndex[index] = 0
+        animalSequenceAnimationTimer[index] = 0
+        
+        print("[GameScene] Showing sequence animation for animal \(index): \(animalSequenceOrder[index])")
     }
     
     private func shuffleSequence(for index: Int) {
         guard index < animalSequences.count else { return }
         
-        // Перемешиваем текущую последовательность
-        animalSequences[index] = Array(availableColors.shuffled().prefix(4))
-        updateAnimalUI(for: index)
+        // НЕ перемешиваем последовательность - оставляем как есть
+        // animalSequences[index] остается неизменной
         
         // Сбрасываем флаг показа последовательности
         animalShowingSequence[index] = false
         
-        print("[GameScene] Shuffled sequence for animal \(index): \(animalSequences[index])")
+        print("[GameScene] Sequence preserved for animal \(index): \(animalSequences[index])")
+    }
+    
+    private func updateSequenceAnimation(for index: Int, deltaTime: TimeInterval) {
+        guard index < animalSequenceAnimationTimer.count && index < animalCurrentSequenceIndex.count else { return }
+        guard animalShowingSequence[index] else { return }
+        
+        animalSequenceAnimationTimer[index] += deltaTime
+        
+        // Каждый шар показывается 4 секунды
+        let timePerDot: TimeInterval = 10
+        let totalTime = timePerDot * 5 // 5 шаров
+        
+        if animalSequenceAnimationTimer[index] >= totalTime {
+            // Анимация завершена - сбрасываем флаг показа
+            animalShowingSequence[index] = false
+            animalCurrentSequenceIndex[index] = 0
+            print("[GameScene] Sequence animation completed for animal \(index)")
+        } else {
+            // Обновляем текущий индекс анимации
+            let newIndex = Int(animalSequenceAnimationTimer[index] / timePerDot)
+            if newIndex != animalCurrentSequenceIndex[index] {
+                animalCurrentSequenceIndex[index] = newIndex
+                print("[GameScene] Animation step \(newIndex) for animal \(index)")
+            }
+        }
     }
     
     private func checkSequenceMatch(for index: Int) {
@@ -488,14 +691,11 @@ class GameScene: SKScene, ObservableObject {
         
         let currentSequence = animalSequences[index]
         let targetSequence = animalTargetSequences[index]
+        let currentTapIndex = index < animalCurrentTapIndex.count ? animalCurrentTapIndex[index] : 0
         
-        // Проверяем точное совпадение последовательностей
-        let isMatch = currentSequence.elementsEqual(targetSequence) { current, target in
-            return current == target
-        }
-        
-        if isMatch {
-            print("[GameScene] Sequence match! Animal \(index) gets +10 seconds and hides")
+        // Проверяем, завершена ли последовательность тапов (все 5 шаров нажаты)
+        if currentTapIndex >= 5 {
+            print("[GameScene] Complete sequence tapped for animal \(index)!")
             
             // Продлеваем таймер животного на 10 секунд
             if index < animalTimers.count {
@@ -504,6 +704,8 @@ class GameScene: SKScene, ObservableObject {
             
             // Скрываем животное (возвращаем в темное состояние)
             hideAnimal(at: index)
+        } else {
+            print("[GameScene] Animal \(index) - tapped \(currentTapIndex)/5 dots")
         }
     }
     
@@ -579,12 +781,29 @@ class GameScene: SKScene, ObservableObject {
         
         let ui = animalUIs[index]
         let sequence = animalSequences[index]
+        let isShowingSequence = index < animalShowingSequence.count ? animalShowingSequence[index] : false
+        let currentSequenceIndex = index < animalCurrentSequenceIndex.count ? animalCurrentSequenceIndex[index] : 0
+        let sequenceOrder = index < animalSequenceOrder.count ? animalSequenceOrder[index] : []
         
-        // Обновляем цветные круги согласно последовательности (всегда 4 разных цвета)
+        // Обновляем цветные круги согласно последовательности (5 цветов)
         for (i, dot) in ui.dots.enumerated() {
             if i < sequence.count {
                 let colorName = sequence[i]
                 dot.texture = SKTexture(imageNamed: colorName)
+                
+                // Устанавливаем размер шара
+                var dotSize: CGFloat = frame.height * 0.08 // размер, чтобы поместились в панель
+                
+                if isShowingSequence && currentSequenceIndex < sequenceOrder.count {
+                    // Проверяем, является ли текущий шар тем, который должен увеличиваться в данный момент
+                    let currentSequenceDotIndex = sequenceOrder[currentSequenceIndex]
+                    if i == currentSequenceDotIndex {
+                        // Большой шар в анимации последовательности
+                        dotSize = frame.height * 0.12
+                    }
+                }
+                
+                dot.size = CGSize(width: dotSize, height: dotSize)
             }
         }
         
@@ -614,14 +833,26 @@ class GameScene: SKScene, ObservableObject {
         if animalSequenceTimer.isEmpty {
             animalSequenceTimer = Array(repeating: 0, count: animals.count)
         }
+        if animalCurrentTapIndex.isEmpty {
+            animalCurrentTapIndex = Array(repeating: 0, count: animals.count)
+        }
+        if animalSequenceOrder.isEmpty {
+            animalSequenceOrder = Array(repeating: [], count: animals.count)
+        }
+        if animalCurrentSequenceIndex.isEmpty {
+            animalCurrentSequenceIndex = Array(repeating: 0, count: animals.count)
+        }
+        if animalSequenceAnimationTimer.isEmpty {
+            animalSequenceAnimationTimer = Array(repeating: 0, count: animals.count)
+        }
         
         let centerX = frame.midX
         let centerY = frame.midY
         let radius = min(frame.width, frame.height) * 0.35
         let angles: [CGFloat] = [0, 72, 144, 216, 288]
         
-        let panelWidth = min(frame.width, frame.height) * 0.28
-        let panelHeight = panelWidth * 0.28
+        let panelWidth = min(frame.width, frame.height) * 0.40 // увеличиваем ширину панели
+        let panelHeight = panelWidth * 0.35 // увеличиваем высоту панели
         let dotSize = panelHeight * 0.7
         let panelOffsetY = frame.height * 0.11 // на сколько выше животного ставим панель
         let timerOffsetY = frame.height * 0.18 // на сколько выше животного ставим таймер
@@ -652,10 +883,13 @@ class GameScene: SKScene, ObservableObject {
             ui.panel.position = CGPoint(x: x, y: y + panelOffsetY)
             ui.panel.isHidden = !isActive
             
-            let spacing = panelWidth * 0.20
-            let startX = ui.panel.position.x - (1.5 * spacing)
+            let spacing = panelWidth * 0.18 // расстояние между кругами, чтобы поместились в панель
+            let startX = ui.panel.position.x - (2.0 * spacing) // центрируем 5 кругов
             for (i, dot) in ui.dots.enumerated() {
-                dot.size = CGSize(width: dotSize, height: dotSize)
+                // Не перезаписываем размер, если он уже установлен в updateAnimalUI
+                if dot.size.width == 0 || dot.size.height == 0 {
+                    dot.size = CGSize(width: dotSize, height: dotSize)
+                }
                 dot.position = CGPoint(x: startX + CGFloat(i) * spacing, y: ui.panel.position.y + panelHeight * 0.10)
                 dot.isHidden = !isActive
             }
@@ -741,75 +975,40 @@ class GameScene: SKScene, ObservableObject {
             }
         }
         
-        // Затем проверяем перетаскивание цветных кругов (только для активных животных)
+        // Проверяем нажатие на цветные круги (только для активных животных)
         for (index, ui) in animalUIs.enumerated() {
             if !animalVisible.indices.contains(index) || !animalVisible[index] { continue }
             if !animalActive.indices.contains(index) || !animalActive[index] { continue } // Только активные
             
-            for dot in ui.dots {
-                if dot.contains(location) {
-                    dot.userData = ["dragging": true, "animalIndex": index]
-                    return
-                }
-            }
-        }
-    }
-    
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
-        let location = touch.location(in: self)
-        
-        for ui in animalUIs {
-            for dot in ui.dots {
-                if dot.userData?["dragging"] as? Bool == true {
-                    dot.position = location
-                }
-            }
-        }
-    }
-    
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
-            let location = touch.location(in: self)
-        
-        for (index, ui) in animalUIs.enumerated() {
             for (i, dot) in ui.dots.enumerated() {
-                if dot.userData?["dragging"] as? Bool == true {
-                    dot.userData?["dragging"] = false
+                if dot.contains(location) {
+                    // Проверяем, правильная ли это позиция в последовательности
+                    let currentTapIndex = index < animalCurrentTapIndex.count ? animalCurrentTapIndex[index] : 0
+                    let sequenceOrder = index < animalSequenceOrder.count ? animalSequenceOrder[index] : []
                     
-                    // Найдём ближайший слот (позицию) среди текущих 4 слотов панели
-                    let panelPos = ui.panel.position
-                    let panelWidth = ui.panel.size.width
-                    let spacing = panelWidth * 0.20
-                    let startX = panelPos.x - (1.5 * spacing)
-                    var closestIndex = 0
-                    var minDist = CGFloat.greatestFiniteMagnitude
-                    for slot in 0..<4 {
-                        let slotPos = CGPoint(x: startX + CGFloat(slot) * spacing, y: panelPos.y + ui.panel.size.height * 0.10)
-                        let d = hypot(slotPos.x - location.x, slotPos.y - location.y)
-                        if d < minDist { minDist = d; closestIndex = slot }
-                    }
-                    
-                    // Поменяем местами элементы в массиве animalSequences[index]
-                    if i != closestIndex, index < animalSequences.count {
-                        var seq = animalSequences[index]
-                        if closestIndex < seq.count, i < seq.count {
-                            seq.swapAt(i, closestIndex)
-                            animalSequences[index] = seq
+                    if currentTapIndex < sequenceOrder.count {
+                        // Проверяем, совпадает ли позиция текущего шара с нужной позицией в последовательности
+                        let expectedPosition = sequenceOrder[currentTapIndex]
+                        
+                        if i == expectedPosition {
+                            // Правильная позиция - переходим к следующему
+                            animalCurrentTapIndex[index] = currentTapIndex + 1
+                            print("[GameScene] Correct tap \(currentTapIndex + 1) for animal \(index) - position: \(i)")
+                            
+                            // Проверяем, завершена ли последовательность
+                            checkSequenceMatch(for: index)
+                        } else {
+                            // Неправильная позиция - сбрасываем последовательность
+                            animalCurrentTapIndex[index] = 0
+                            print("[GameScene] Wrong tap for animal \(index) - expected position \(expectedPosition), got \(i), resetting")
                         }
                     }
-                    
-                    // Переложим UI заново по обновлённой последовательности
-                    updateAnimalUI(for: index)
-                    layoutAnimals()
-                    
-                    // Проверяем правильность комбинации
-                    checkSequenceMatch(for: index)
                     return
                 }
             }
         }
     }
+    
     
     // MARK: - Timer loop
     override func update(_ currentTime: TimeInterval) {
@@ -819,6 +1018,19 @@ class GameScene: SKScene, ObservableObject {
         
         // Обновляем вращение прожектора каждый кадр
         updateSpotlightRotation()
+        
+        // Обновляем хаотичные прожекторы каждый кадр
+        updateChaoticSpotlights()
+        
+        // Обновляем анимацию последовательности каждый кадр
+        for i in 0..<animalSequenceAnimationTimer.count {
+            updateSequenceAnimation(for: i, deltaTime: dt)
+        }
+        
+        // Обновляем UI каждый кадр для плавной анимации
+        for i in 0..<animals.count {
+            updateAnimalUI(for: i)
+        }
         
         if dt >= 1.0 {
             lastUpdateTime = currentTime
@@ -901,10 +1113,31 @@ class GameScene: SKScene, ObservableObject {
         animalFirstAppearance = Array(repeating: false, count: animals.count)
         animalShowingSequence = Array(repeating: false, count: animals.count)
         animalSequenceTimer = Array(repeating: 0, count: animals.count)
+        animalCurrentTapIndex = Array(repeating: 0, count: animals.count)
+        animalSequenceOrder = Array(repeating: [], count: animals.count)
+        animalCurrentSequenceIndex = Array(repeating: 0, count: animals.count)
+        animalSequenceAnimationTimer = Array(repeating: 0, count: animals.count)
         
         // Сбрасываем состояние прожекторов
         spotlightTargetIndex = -1
         spotlightAngle = 0
+        
+        // Сбрасываем хаотичные прожекторы
+        for i in 0..<chaoticSpotlightPositions.count {
+            let arenaRadius = min(frame.width, frame.height) * 0.35
+            let centerX = frame.midX
+            let centerY = frame.midY
+            let angle = Double.random(in: 0...(2 * Double.pi))
+            let distance = Double.random(in: 0...Double(arenaRadius))
+            
+            chaoticSpotlightPositions[i] = CGPoint(
+                x: centerX + CGFloat(distance * cos(angle)),
+                y: centerY + CGFloat(distance * sin(angle))
+            )
+            chaoticSpotlightVelocities[i] = CGPoint.zero
+            chaoticSpotlightChangeTimers[i] = 0
+            generateNewChaoticTarget(for: i)
+        }
         
         // Показываем прожектор (он всегда видим)
         for spotlight in animalSpotlights {
