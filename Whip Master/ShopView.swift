@@ -76,15 +76,15 @@ struct ShopView: View {
     private func getSkinInfoText(_ skinId: Int) -> String {
         switch skinId {
         case 1:
-            return "Ошибки игрока замедляют таймер животного на 4 сек вместо штрафа"
+            return "Player mistakes slow down animal timer by 4 sec instead of penalty"
         case 2:
-            return "При правильном повторении комбинации добавляет +3 сек к таймеру животного"
+            return "Adds +3 sec to animal timer when correctly repeating sequence"
         case 3:
-            return "Увеличивает время показа комбинации на +4 сек"
+            return "Increases sequence display time by +4 sec"
         case 4:
-            return "Увеличивает время показа комбинации на +2 сек"
+            return "Increases sequence display time by +2 sec"
         default:
-            return "Информация о скине"
+            return "Skin information"
         }
     }
     
