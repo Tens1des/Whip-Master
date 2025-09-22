@@ -206,6 +206,7 @@ class GameScene: SKScene, ObservableObject {
             // Таймер: часы + время + прогресс-бар
             let clock = SKSpriteNode(imageNamed: "clock_icon")
             clock.zPosition = 14
+            clock.isHidden = true
             addChild(clock)
             
             let timeLabel = SKLabelNode(fontNamed: "Arial-Bold")
@@ -213,11 +214,13 @@ class GameScene: SKScene, ObservableObject {
             timeLabel.fontSize = 24
             timeLabel.fontColor = .white
             timeLabel.zPosition = 15
+            timeLabel.isHidden = true
             addChild(timeLabel)
             
             // Простой градиентный прогресс-бар
             let progressBar = createGradientProgressBar(size: CGSize(width: 100, height: 20))
             progressBar.zPosition = 14
+            progressBar.isHidden = true
             addChild(progressBar)
             
             animalUIs.append(AnimalUI(panel: panel, dots: dots, clock: clock, timeLabel: timeLabel, progressBar: progressBar))
@@ -472,6 +475,8 @@ class GameScene: SKScene, ObservableObject {
         ui.clock.isHidden = false
         ui.timeLabel.isHidden = false
         ui.progressBar.isHidden = false
+        // Сразу выставляем корректные позиции/размеры, чтобы избежать мерцания в (0,0)
+        updateTimerUI(for: index)
         
         print("[GameScene] Showing timer for animal \(index)")
     }
@@ -902,32 +907,7 @@ class GameScene: SKScene, ObservableObject {
             
             // Если животное освещено, обновляем позицию таймера
             if isIlluminated {
-                let timerY = y + timerOffsetY
-                let clockSize = frame.height * 0.08
-                ui.clock.size = CGSize(width: clockSize, height: clockSize)
-                ui.clock.position = CGPoint(x: x - panelWidth * 0.35, y: timerY)
-                
-                // Простой градиентный прогресс-бар — правее от часов
-                let barWidth = panelWidth * 0.5
-                let barHeight = frame.height * 0.03
-                let progressStartX = ui.clock.position.x + (ui.clock.size.width * 0.6) + 5
-                
-                // Анимируем прогресс-бар в зависимости от оставшегося времени
-                let remainingTime = animalTimers[index]
-                let totalTime = 30
-                let progress = max(0, CGFloat(remainingTime) / CGFloat(totalTime))
-                let currentWidth = barWidth * progress
-                
-                // Обновляем размер и позицию прогресс-бара
-                ui.progressBar.size = CGSize(width: currentWidth, height: barHeight)
-                ui.progressBar.position = CGPoint(x: progressStartX + currentWidth / 2, y: timerY)
-                
-                // Время — над прогресс-баром
-                ui.timeLabel.text = String(format: "%02d:%02d", animalTimers[index] / 60, animalTimers[index] % 60)
-                ui.timeLabel.horizontalAlignmentMode = .center
-                ui.timeLabel.verticalAlignmentMode = .center
-                ui.timeLabel.fontSize = max(14, frame.height * 0.025)
-                ui.timeLabel.position = CGPoint(x: progressStartX + barWidth / 2, y: timerY + barHeight * 1.2)
+                updateTimerUI(for: index)
             }
             
             // Обновляем UI с рандомными последовательностями
@@ -941,6 +921,43 @@ class GameScene: SKScene, ObservableObject {
             clownNode?.xScale = scale
             clownNode?.yScale = scale
         }
+    }
+
+    // Отдельно обновляем геометрию таймера/прогресс-бара для конкретного животного
+    private func updateTimerUI(for index: Int) {
+        guard index < animals.count, index < animalUIs.count else { return }
+        let ui = animalUIs[index]
+        let centerX = frame.midX
+        let centerY = frame.midY
+        let radius = min(frame.width, frame.height) * 0.35
+        let angles: [CGFloat] = [0, 72, 144, 216, 288]
+        let angle = angles[index] * .pi / 180
+        let x = centerX + radius * cos(angle)
+        var y = centerY + radius * sin(angle)
+        if index == 1 {
+            y += -frame.height * 0.10
+        }
+        let panelWidth = min(frame.width, frame.height) * 0.40
+        let panelHeight = panelWidth * 0.35
+        let timerOffsetY = frame.height * 0.18
+        let timerY = y + timerOffsetY
+        let clockSize = frame.height * 0.08
+        ui.clock.size = CGSize(width: clockSize, height: clockSize)
+        ui.clock.position = CGPoint(x: x - panelWidth * 0.35, y: timerY)
+        let barWidth = panelWidth * 0.5
+        let barHeight = frame.height * 0.03
+        let progressStartX = ui.clock.position.x + (ui.clock.size.width * 0.6) + 5
+        let remainingTime = animalTimers[index]
+        let totalTime = 30
+        let progress = max(0, CGFloat(remainingTime) / CGFloat(totalTime))
+        let currentWidth = barWidth * progress
+        ui.progressBar.size = CGSize(width: currentWidth, height: barHeight)
+        ui.progressBar.position = CGPoint(x: progressStartX + currentWidth / 2, y: timerY)
+        ui.timeLabel.text = String(format: "%02d:%02d", animalTimers[index] / 60, animalTimers[index] % 60)
+        ui.timeLabel.horizontalAlignmentMode = .center
+        ui.timeLabel.verticalAlignmentMode = .center
+        ui.timeLabel.fontSize = max(14, frame.height * 0.025)
+        ui.timeLabel.position = CGPoint(x: progressStartX + barWidth / 2, y: timerY + barHeight * 1.2)
     }
     
     
